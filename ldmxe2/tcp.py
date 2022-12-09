@@ -1,43 +1,54 @@
+"""Lumize DMX Engine 2 TCP connection handling module"""
 import socket
 import threading
 import multiprocessing
 import asyncio
 
-WELCOME_MESSAGE = b"Lumize DMX Engine v2.0\n"
-CONNECTION_CHECK_INTERVAL: int = 10
-CONNECTION_CHECK_MESSAGE: str = "conncheck"
-CONNECTION_CHECK_EXPECTED_RESPONSE: str = "ok"
+from types import FunctionType
 
-LOG_DEBUG_DEFAULT = True
+# Configuration constants
+WELCOME_MESSAGE = b"Lumize DMX Engine v2.0\n"
+CONNECTION_CHECK_EXPECTED_RESPONSE: str = "ok"
+CONNECTION_CHECK_MESSAGE: str = "conncheck"
 
 # Exception types
 class ReconnectError(Exception):
-    pass
+    """Error in reconnecting to Lumize DMX Engine 2"""
 
 
 class NotConnected(Exception):
-    pass
+    """Tried sending command but connection to Lumize DMX Engine 2 can't be enstablished"""
 
 
 class TcpConnection:
-    """Class that represents a TCP connection to the Lumize DMX Engine"""
+    """Class that represents a TCP connection to the Lumize DMX Engine 2"""
 
     def __init__(
-        self, host: str, port: int, logger_info, log_debug: bool = LOG_DEBUG_DEFAULT
+        self,
+        host: str,
+        port: int,
+        ext_logger: FunctionType,
+        keep_alive: int,
     ) -> None:
         self.__host: str = host
         self.__port: int = port
-        self.__log_debug: bool = log_debug
-        self.__logger_info = logger_info
+        self.__keep_alive_interval = keep_alive
+        self.__run_keep_alive = keep_alive > 0  # If keep_alive is 0s, don't run
 
+        # Setup print as logger if no external logger function is provided
+        if ext_logger is None:
+            self.__logger = print
+        else:
+            self.__logger = ext_logger
+
+        # Setup state variables
         self.__running: bool = True
         self.__is_connected: bool = False
 
-        # Start connection checker thread
-        self.__connection_checker_cv = multiprocessing.Condition()
-        self.__connection_checker_thread = threading.Thread(
-            target=self.__check_connection
-        )
+        self.__keep_alive_cv = multiprocessing.Condition()
+        self.__keep_alive_thread = threading.Thread(target=self.__keep_alive)
+
+        # Init socket and respective lock
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.__socket_lock = threading.Lock()
 
@@ -46,26 +57,25 @@ class TcpConnection:
         try:
             self.__reconnect()
         except ReconnectError:
-            if self.__log_debug:
-                self.__logger_info("[TCP] First connection unsuccesful")
+            self.__logger("[TCP] First connection unsuccesful")
 
-        # self.__connection_checker_thread.start()
+        # Start keep alive thread if configured
+        if self.__run_keep_alive:
+            self.__keep_alive_thread.start()
 
     def stop(self) -> None:
         """Stops the connection"""
         self.__running = False
 
-        # Notify connection checker that we want to exit immediately
-        with self.__connection_checker_cv:
-            self.__connection_checker_cv.notify()
+        if self.__run_keep_alive:
+            # Notify connection checker that we want to exit immediately
+            with self.__keep_alive_cv:
+                self.__keep_alive_cv.notify()
 
-        # Wait for conneciton checker thread to finish execution
-        self.__logger_info("Wait for thread")
-        self.__connection_checker_thread.join()
-        self.__logger_info("Thread awaited for thread")
+            # Wait for conneciton checker thread to finish execution
+            self.__keep_alive_thread.join()
 
-        if self.__log_debug:
-            self.__logger_info("[TCP] Closing connection...")
+        self.__logger("[TCP] Closing connection...")
 
         # Close socket
         try:
@@ -78,15 +88,13 @@ class TcpConnection:
         return self.__is_connected
 
     def __reconnect(self):
-        if self.__log_debug:
-            self.__logger_info(
-                f"[TCP] Attepting connection to {self.__host}, port: {self.__port}"
-            )
+        self.__logger(
+            f"[TCP] Attepting connection to {self.__host}, port: {self.__port}"
+        )
 
         # Lock socket mutex
         with self.__socket_lock:
             try:
-                print("[LUMIZE TCP] __reconnect: got socket lock")
                 # Create socket
                 self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -96,39 +104,33 @@ class TcpConnection:
                 # Read welcome message
                 self.__socket.settimeout(5)  # Set timeout to receive welcome message
                 received_message: bytes = self.__socket.recv(len(WELCOME_MESSAGE) + 5)
-                print(f"[LUMIZE TCP] __reconnect: received message: {received_message}")
 
             except socket.error as error:
-                if self.__log_debug:
-                    self.__logger_info(f"[TCP] Socket error while connecting: {error}")
-                    self.__logger_info(error)
+                self.__logger(f"[TCP] Socket error while connecting: {error}")
+                self.__logger(error)
 
                 self.__socket.close()
                 self.__is_connected = False
-                raise ReconnectError
+                raise ReconnectError from error
 
             # Check that remote host responded correctly
             if received_message == WELCOME_MESSAGE:
-                if self.__log_debug:
-                    self.__logger_info("[TCP] Connected!")
+                self.__logger("[TCP] Connected!")
 
                 self.__is_connected = True
                 # self.__socket.settimeout(None)
             else:
-                if self.__log_debug:
-                    self.__logger_info(
-                        "[TCP] Remote host didn't respond correctly, disconnecting."
-                    )
+                self.__logger(
+                    "[TCP] Remote host didn't respond correctly, disconnecting."
+                )
                 self.__socket.close()
                 self.__is_connected = False
                 raise ReconnectError
 
-    def __check_connection(self) -> None:
+    def __keep_alive(self) -> None:
         while self.__running:
-            if self.__log_debug:
-                self.__logger_info("[TCP], Checking connection...")
+            self.__logger("[TCP], Checking connection...")
 
-            self.__logger_info("Checking")
             # Send connection check command
             try:
                 conncheck_response: str = asyncio.run(
@@ -146,8 +148,8 @@ class TcpConnection:
                     pass
 
             # Wait for connection check interval or or notification from other thread
-            with self.__connection_checker_cv:
-                self.__connection_checker_cv.wait(timeout=CONNECTION_CHECK_INTERVAL)
+            with self.__keep_alive_cv:
+                self.__keep_alive_cv.wait(timeout=self.__keep_alive_interval)
 
     async def request(self, request_msg: str) -> str:
         """Sends a request to the Lumize DMX Engine and retuns its response"""
@@ -168,10 +170,10 @@ class TcpConnection:
                         self.__socket.sendall(bytes(request_msg, "utf-8"))
                         response_msg: bytes = self.__socket.recv(64)
                         return response_msg.decode("utf-8").strip()
-                except socket.error:
-                    raise NotConnected
-            except ReconnectError:
-                raise NotConnected
+                except socket.error as error:
+                    raise NotConnected from error
+            except ReconnectError as error:
+                raise NotConnected from error
 
 
 # Check if module is being run as program

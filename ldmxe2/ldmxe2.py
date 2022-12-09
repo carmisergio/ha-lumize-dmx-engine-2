@@ -1,25 +1,29 @@
-# Lumize DMX Engine 2 interface
-#
-# Module to communicate with the Lumize DMX Engine 2
+"""Lumize DMX Engine 2 interface module for python"""
+
+from types import FunctionType
 
 from .tcp import TcpConnection, NotConnected  # TcpConnection class
 
+KEEP_ALIVE_DEFAULT: int = 0  # seconds
 
+# Exception types
 class SendError(Exception):
-    pass
+    """Command send error"""
 
 
 class WrongChannel(Exception):
-    pass
+    """Trying to get LumizeDMXEngine2Light object for channel that doesn't exist"""
 
 
 class LumizeDMXEngine2Light:
+    """Object that references specific channel on the Lumize DMX Engine 2"""
+
     def __init__(self, connection: TcpConnection, channel: int):
         self.__connection = connection
         self.__channel = channel
 
     async def turn_on(self, brightness: int = None, transition: int = None):
-        print(f"[LIGHT {self.__channel}] Turning ON...")
+        """Turn on channel"""
 
         # Construct message
         message: str = f"on,{self.__channel}"
@@ -31,16 +35,18 @@ class LumizeDMXEngine2Light:
         # Send message
         try:
             response = await self.__connection.request(message)
-            print(response)
+
+            # Check response
             if response.strip() != "ok":
                 raise SendError
-        except NotConnected:
-            raise SendError
+
+        except NotConnected as not_connected:
+            raise SendError from not_connected
 
         return True
 
     async def turn_off(self, transition: int = None):
-        print(f"[LIGHT {self.__channel}] Turning OFF...")
+        """Turn off channel"""
 
         # Construct message
         message: str = f"off,{self.__channel}"
@@ -50,70 +56,91 @@ class LumizeDMXEngine2Light:
         # Send message
         try:
             response = await self.__connection.request(message)
+
+            # Check response
             if response.strip() != "ok":
                 raise SendError
-        except NotConnected:
-            raise SendError
+
+        except NotConnected as not_connected:
+            raise SendError from not_connected
 
         return True
 
     async def get_state(self):
-        print(f"[LIGHT {self.__channel}] Getting state...")
+        """Get channel state"""
 
         # Construct message
         message: str = f"sreq,{self.__channel}"
 
-        print(message)
-
         # Send message
         try:
             response = await self.__connection.request(message)
-            print(response)
 
             response_split = response.strip().split(",")
 
+            # Check response is a status response message
             if response_split[0] != "sres":
-                print("Wrong return message")
                 raise SendError
 
+            # Check reported channel in response matches channel of light
             if int(response_split[1]) != self.__channel:
-                print(
-                    f"Response channel: {response_split[1]}, expected channel: {self.__channel}"
-                )
-                print(type(self.__channel))
                 raise SendError
 
+            # Extract state from response
             state_split = response_split[2].split("-")
+            state = bool(int(state_split[0]))
+            brightness = int(state_split[1])
 
-            return (bool(int(state_split[0])), int(state_split[1]))
+            return (state, brightness)
 
-        except NotConnected:
-            raise SendError
+        except NotConnected as not_connected:
+            raise SendError from not_connected
 
         return True
 
     def is_available(self):
-        """See if the light is available"""
+        """Returns true if the connection to the engine is ok"""
         return self.__connection.is_ok()
 
 
 class LumizeDMXEngine2:
-    # TODO REMOVE LOGGER INFO
-    def __init__(self, host: str, port: int, logger_info):
-        logger_info("Init Lumize DMX Engine 2!")
-        self.__connection = TcpConnection(host, port, logger_info, True)
+    """Lumize DMX Engine 2 connection instance"""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        ext_logger: FunctionType or None = None,
+        keep_alive: int = KEEP_ALIVE_DEFAULT,
+    ):
+
+        # Setup print as logger if no external logger function is provided
+        if ext_logger is None:
+            self.__logger = print
+        else:
+            self.__logger = ext_logger
+
+        self.__logger("Init Lumize DMX Engine 2!")
+
+        # Setup connection
+        self.__connection = TcpConnection(host, port, self.__logger, keep_alive)
 
     def start(self) -> None:
+        """Start connection to the Lumize DMX Engine 2"""
         self.__connection.start()
 
     def stop(self) -> None:
+        """Stop connection to the Lumize DMX Engine 2"""
+        self.__connection.start()
         self.__connection.stop()
 
     def get_light_entity(self, channel: int) -> LumizeDMXEngine2Light:
+        """Returns LumizeDMXEngine2Light object for given channel"""
 
         # See if channel is in range
         if channel < 0 or channel >= 512:
             raise WrongChannel
+
         return LumizeDMXEngine2Light(self.__connection, channel)
 
 

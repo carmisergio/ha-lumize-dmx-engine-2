@@ -7,17 +7,13 @@ import logging
 
 import voluptuous as vol
 
-from pprint import pformat
 
-from .ldmxe2 import SendError
-
-# Import the device class from the component that you want to support
+# Home Aassistant imports
 import homeassistant.helpers.config_validation as cv
-from homeassistant.const import CONF_NAME, CONF_HOST
+from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
 from homeassistant.components.light import (
     PLATFORM_SCHEMA,
     ATTR_BRIGHTNESS,
@@ -27,10 +23,15 @@ from homeassistant.components.light import (
     ColorMode,
 )
 
-_LOGGER = logging.getLogger("ldmxe2")
+# Local imports
+from .ldmxe2 import SendError, LumizeDMXEngine2, LumizeDMXEngine2Light
+from .const import LDMXE2_INSTANCE, CONF_CHANNEL
 
-# Validation of the user's configuration
-CONF_CHANNEL = "channel"
+
+# Get logger for this file's name
+_LOGGER = logging.getLogger(__name__)
+
+# Define platform schema
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Optional(CONF_NAME): cv.string,
@@ -38,33 +39,30 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     }
 )
 
-DOMAIN = "ldmxe2"
-KEY_LDMXE2_INSTANCE = "ldmxe2_instance"
-
 
 def setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
     add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+    _: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the Lumize DMX Engine 2 Light platform."""
 
-    # Get config
-    name = config[CONF_NAME]
-    channel = config[CONF_CHANNEL]
+    # Get config parameters
+    name: cv.string = config[CONF_NAME]
+    channel: cv.positive_int = config[CONF_CHANNEL]
 
     # Add devices
-    _LOGGER.info(f'Setting up light "{name}", channel: {channel}')
+    _LOGGER.debug("Setting up light %s, channel: %d", name, channel)
 
     # Check that the platform has been setup
-    # if(!(KEY_LDMXE2_INSTANCE in  hass.data)):
-    #     return False
+    if not LDMXE2_INSTANCE in hass.data:
+        return False
 
-    ldmxe2 = hass.data[KEY_LDMXE2_INSTANCE]
-    _LOGGER.info(KEY_LDMXE2_INSTANCE)
-    _LOGGER.info(hass.data[KEY_LDMXE2_INSTANCE])
+    # Get LumizeDMXEngine2 object from hass.data
+    ldmxe2: LumizeDMXEngine2 = hass.data[LDMXE2_INSTANCE]
 
+    # Add light entity
     add_entities([LumizeDMXEngine2LightEntity(name, ldmxe2.get_light_entity(channel))])
 
     return True
@@ -73,20 +71,22 @@ def setup_platform(
 class LumizeDMXEngine2LightEntity(LightEntity):
     """Representation of an Lumize DMX Engine 2 Light."""
 
-    def __init__(self, name, ldmxe2_light) -> None:
+    def __init__(self, name, ldmxe2_light: LumizeDMXEngine2Light) -> None:
         """Initialize an LumizeDMXEngine2Light"""
-        # _LOGGER.info(pformat(light))
+
+        # Light object
         self._ldmxe2_light = ldmxe2_light
+
+        # Entity properties
         self._name = name
-        self._state = None
-        self._brightness = None
-
         self._attr_unique_id = f"light-ldmxe2-{name.strip()}"
-
         self._attr_supported_features = LightEntityFeature.TRANSITION
-
         self._attr_supported_color_modes: set[ColorMode] = set()
         self._attr_supported_color_modes.add(ColorMode.BRIGHTNESS)
+
+        # State
+        self._state = None
+        self._brightness = None
 
     @property
     def name(self) -> str:
@@ -109,9 +109,6 @@ class LumizeDMXEngine2LightEntity(LightEntity):
         # Get turn on parameters
         brightness = kwargs.get(ATTR_BRIGHTNESS, None)
         transition = kwargs.get(ATTR_TRANSITION, None)
-        _LOGGER.info(
-            f"Light turn on, brightness: {brightness}, transition: {transition}"
-        )
 
         try:
             await self._ldmxe2_light.turn_on(
@@ -126,24 +123,22 @@ class LumizeDMXEngine2LightEntity(LightEntity):
         # Get turn off parameters
         transition = kwargs.get(ATTR_TRANSITION, None)
 
-        _LOGGER.info(f"Light turn off, transition: {transition}")
-
         try:
             await self._ldmxe2_light.turn_off(transition=transition)
         except SendError:
             pass
 
     async def async_update(self) -> None:
-        """Fetch new state data for this light.
-        This is the only method that should fetch new data for Home Assistant.
-        """
+        """Fetch new state data for this light."""
         try:
             response = await self._ldmxe2_light.get_state()
+
+            # Set state variables
             self._state = response[0]
             self._brightness = int(response[1])
-            _LOGGER.info(f"State {self._state}, brightness: {self._brightness}")
+
         except SendError:
-            _LOGGER.info(f"Get state error")
             pass
 
+        # Check if integration is connected to the Engine
         self._attr_available = self._ldmxe2_light.is_available()
