@@ -1,0 +1,9 @@
+dim_start:
+  name: Dim start
+  description: Start pushbutton dimming a channel
+  target:
+
+dim_stop:
+  name: Dim stop
+  description: Stop pushbutton dimming a channel
+  target:

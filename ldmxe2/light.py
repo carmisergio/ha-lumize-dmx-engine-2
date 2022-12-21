@@ -25,7 +25,7 @@ from homeassistant.components.light import (
 
 # Local imports
 from .ldmxe2 import SendError, LumizeDMXEngine2, LumizeDMXEngine2Light
-from .const import LDMXE2_INSTANCE, CONF_CHANNEL
+from .const import LDMXE2_INSTANCE, CONF_CHANNEL, LDMXE2_ENTITIES
 
 
 # Get logger for this file's name
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 # Define platform schema
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
-        vol.Optional(CONF_NAME): cv.string,
+        vol.Required(CONF_NAME): cv.string,
         vol.Required(CONF_CHANNEL): cv.positive_int,
     }
 )
@@ -62,8 +62,14 @@ def setup_platform(
     # Get LumizeDMXEngine2 object from hass.data
     ldmxe2: LumizeDMXEngine2 = hass.data[LDMXE2_INSTANCE]
 
+    # Generate entity
+    entity = LumizeDMXEngine2LightEntity(name, ldmxe2.get_light_entity(channel))
+
+    # Append entity to local list used for services
+    hass.data[LDMXE2_ENTITIES].append(entity)
+
     # Add light entity
-    add_entities([LumizeDMXEngine2LightEntity(name, ldmxe2.get_light_entity(channel))])
+    add_entities([entity])
 
     return True
 
@@ -79,7 +85,7 @@ class LumizeDMXEngine2LightEntity(LightEntity):
 
         # Entity properties
         self._name = name
-        self._attr_unique_id = f"light-ldmxe2-{name.strip()}"
+        self._attr_unique_id = f"{self._ldmxe2_light.host}-{self._ldmxe2_light.channel}"
         self._attr_supported_features = LightEntityFeature.TRANSITION
         self._attr_supported_color_modes: set[ColorMode] = set()
         self._attr_supported_color_modes.add(ColorMode.BRIGHTNESS)
@@ -102,6 +108,9 @@ class LumizeDMXEngine2LightEntity(LightEntity):
     def is_on(self) -> bool | None:
         """Return true if light is on."""
         return self._state
+
+    async def async_added_to_hass(self) -> None:
+        self.schedule_update_ha_state(True)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Instruct the light to turn on"""
@@ -127,6 +136,24 @@ class LumizeDMXEngine2LightEntity(LightEntity):
             await self._ldmxe2_light.turn_off(transition=transition)
         except SendError:
             pass
+
+    async def async_dim_start(self) -> None:
+        """Instruct the light to start dimming"""
+
+        try:
+            await self._ldmxe2_light.pushbutton_fade_start()
+        except SendError:
+            pass
+
+    async def async_dim_stop(self) -> None:
+        """Instruct the light to stop dimming"""
+
+        try:
+            await self._ldmxe2_light.pushbutton_fade_end()
+        except SendError:
+            pass
+
+        self.schedule_update_ha_state(True)
 
     async def async_update(self) -> None:
         """Fetch new state data for this light."""

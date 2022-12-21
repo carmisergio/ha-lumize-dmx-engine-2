@@ -7,18 +7,22 @@ import logging
 import voluptuous as vol
 
 # Home Assistant imports
-from homeassistant.const import Platform, CONF_HOST, CONF_PORT
+from homeassistant.const import Platform, CONF_HOST, CONF_PORT, ATTR_ENTITY_ID
 import homeassistant.helpers.config_validation as cv
-from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ServiceCallType
+from homeassistant.core import HomeAssistant, callback
 
 # Local imports
 from .ldmxe2 import LumizeDMXEngine2
 from .const import (
     DOMAIN,
     LDMXE2_INSTANCE,
+    LDMXE2_ENTITIES,
     CONF_KEEP_ALIVE,
     DEFAULT_PORT,
     DEFAULT_KEEP_ALIVE,
+    SERVICE_DIM_START,
+    SERVICE_DIM_STOP,
 )
 
 
@@ -64,6 +68,45 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
 
     # Save instance to be able to use it from platforms
     hass.data[LDMXE2_INSTANCE] = ldmxe2
+
+    # Init entites list to be used for services
+    hass.data[LDMXE2_ENTITIES] = []
+
+    # Define service callbacks
+    @callback
+    async def handle_services(call: ServiceCallType) -> None:
+        """Start pushbutton fade on a channel"""
+        if call.service == SERVICE_DIM_START:
+            entity_ids = call.data.get(ATTR_ENTITY_ID)
+
+            # Find devices on which to operate
+            entities = [
+                entity
+                for entity in hass.data[LDMXE2_ENTITIES]
+                if entity.entity_id in entity_ids
+            ]
+
+            # Tell the entities to start dimming
+            for entity in entities:
+                await entity.async_dim_start()
+
+        elif call.service == SERVICE_DIM_STOP:
+            entity_ids = call.data.get(ATTR_ENTITY_ID)
+
+            # Find devices on which to operate
+            entities = [
+                entity
+                for entity in hass.data[LDMXE2_ENTITIES]
+                if entity.entity_id in entity_ids
+            ]
+
+            # Tell the entities to stop dimming
+            for entity in entities:
+                await entity.async_dim_stop()
+
+    # Register services
+    hass.services.async_register(DOMAIN, SERVICE_DIM_START, handle_services)
+    hass.services.async_register(DOMAIN, SERVICE_DIM_STOP, handle_services)
 
     _LOGGER.info("Setup completed, host: %s", host)
 

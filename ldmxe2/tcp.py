@@ -52,6 +52,11 @@ class TcpConnection:
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.__socket_lock = threading.Lock()
 
+    @property
+    def host(self) -> int:
+        """Returns hostname of the engine this connections refers to"""
+        return self.__host
+
     def start(self) -> None:
         """Starts the connection"""
         try:

@@ -22,6 +22,16 @@ class LumizeDMXEngine2Light:
         self.__connection = connection
         self.__channel = channel
 
+    @property
+    def channel(self) -> int:
+        """Returns channel number of the entity"""
+        return self.__channel
+
+    @property
+    def host(self) -> int:
+        """Returns hostname of the engine controlling this light"""
+        return self.__connection.host
+
     async def turn_on(self, brightness: int = None, transition: int = None):
         """Turn on channel"""
 
@@ -52,6 +62,44 @@ class LumizeDMXEngine2Light:
         message: str = f"off,{self.__channel}"
         if transition is not None:
             message += f",t{transition*1000}"
+
+        # Send message
+        try:
+            response = await self.__connection.request(message)
+
+            # Check response
+            if response.strip() != "ok":
+                raise SendError
+
+        except NotConnected as not_connected:
+            raise SendError from not_connected
+
+        return True
+
+    async def pushbutton_fade_start(self):
+        """Start pusbhutton fade on channel"""
+
+        # Construct message
+        message: str = f"pfstart,{self.__channel}"
+
+        # Send message
+        try:
+            response = await self.__connection.request(message)
+
+            # Check response
+            if response.strip() != "ok":
+                raise SendError
+
+        except NotConnected as not_connected:
+            raise SendError from not_connected
+
+        return True
+
+    async def pushbutton_fade_end(self):
+        """End pusbhutton fade on channel"""
+
+        # Construct message
+        message: str = f"pfend,{self.__channel}"
 
         # Send message
         try:
