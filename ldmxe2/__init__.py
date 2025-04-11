@@ -9,7 +9,7 @@ import voluptuous as vol
 # Home Assistant imports
 from homeassistant.const import Platform, CONF_HOST, CONF_PORT, ATTR_ENTITY_ID
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.typing import ServiceCallType
+from homeassistant.core import ServiceCall
 from homeassistant.core import HomeAssistant, callback
 
 # Local imports
@@ -74,7 +74,7 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
 
     # Define service callbacks
     @callback
-    async def handle_services(call: ServiceCallType) -> None:
+    async def handle_services(call: ServiceCall) -> None:
         """Start pushbutton fade on a channel"""
         if call.service == SERVICE_DIM_START:
             entity_ids = call.data.get(ATTR_ENTITY_ID)
